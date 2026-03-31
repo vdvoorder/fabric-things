@@ -1,8 +1,7 @@
 // Tabular Editor C# script to show comprehensive column statistics including distributions.
 // TopN version - analyzes only the first N rows for performance on large tables.
 // For full table analysis, use VisualizeColumnDistributions.csx.
-// Vibe-coded by Ruben Van de Voorde with Claude Code.
-
+//
 // Instructions
 // ------------
 // 1. Save this script as a macro with a context of 'Column'
@@ -39,6 +38,12 @@ bool IsNumericColumn(Column col)
 bool IsBooleanColumn(Column col)
 {
     return col.DataType == DataType.Boolean;
+}
+
+// Check if a column is DateTime
+bool IsDateTimeColumn(Column col)
+{
+    return col.DataType == DataType.DateTime;
 }
 
 // Block height strings (8 levels, from lowest to highest)
@@ -103,12 +108,15 @@ string GenerateSparkline(List<int> binCounts)
 
 // Get histogram data for a single column (TopN version)
 // Returns: (min, max, binCounts, error) - error is null on success
-(double min, double max, List<int> binCounts, string error) GetHistogramData(Column col, string topNTableExpr, string colNameOnly)
+(double min, double max, List<int> binCounts, string error) GetHistogramData(Column col, string topNTableExpr, string colNameOnly, bool isDateTime = false)
 {
     string tableDaxName = col.Table.DaxObjectFullName;
 
+    // DateTime columns: wrap with INT() to convert to OA date serial for numeric binning
+    string colExpr = isDateTime ? $"INT([{colNameOnly}])" : $"[{colNameOnly}]";
+
     // Get min and max values from TopN subset
-    string minMaxDax = $@"ROW(""Min"", MINX({topNTableExpr}, [{colNameOnly}]), ""Max"", MAXX({topNTableExpr}, [{colNameOnly}]))";
+    string minMaxDax = $@"ROW(""Min"", MINX({topNTableExpr}, {colExpr}), ""Max"", MAXX({topNTableExpr}, {colExpr}))";
 
     double minVal, maxVal;
     try
@@ -148,7 +156,7 @@ ADDCOLUMNS(
     ""Count"",
     VAR _binStart = [Value]
     VAR _binEnd = [Value] + _binSize
-    RETURN COUNTROWS(FILTER(_topN, [{colNameOnly}] >= _binStart && [{colNameOnly}] < _binEnd))
+    RETURN COUNTROWS(FILTER(_topN, {colExpr} >= _binStart && {colExpr} < _binEnd))
 )";
 
     try
@@ -166,7 +174,7 @@ ADDCOLUMNS(
         }
 
         // Fix last bin to include max value
-        string lastBinDax = $@"VAR _topN = {topNTableExpr} RETURN ROW(""Count"", COUNTROWS(FILTER(_topN, [{colNameOnly}] >= {(maxVal - binSize).ToString(System.Globalization.CultureInfo.InvariantCulture)})))";
+        string lastBinDax = $@"VAR _topN = {topNTableExpr} RETURN ROW(""Count"", COUNTROWS(FILTER(_topN, {colExpr} >= {(maxVal - binSize).ToString(System.Globalization.CultureInfo.InvariantCulture)})))";
         var lastBinResult = EvaluateDax(lastBinDax) as System.Data.DataTable;
         if (lastBinResult != null && lastBinResult.Rows.Count > 0 && binCounts.Count > 0)
         {
@@ -206,6 +214,8 @@ else
     {
         var allColumns = Selected.Columns.ToList();
         var numericColumns = allColumns.Where(c => IsNumericColumn(c)).ToList();
+        var dateTimeColumns = allColumns.Where(c => IsDateTimeColumn(c)).ToList();
+        var histogramColumns = numericColumns.Concat(dateTimeColumns).ToList();
         string tableDaxName = _FirstTable.DaxObjectFullName;
         string topNTableExpr = $"TOPN({TopN}, {tableDaxName})";
 
@@ -314,14 +324,15 @@ RETURN ROW(
             }
         }
 
-        // Phase 4: Histograms (only for numeric columns)
+        // Phase 4: Histograms (numeric and datetime columns)
         var histogramData = new Dictionary<string, string>();
 
-        foreach (var col in numericColumns)
+        foreach (var col in histogramColumns)
         {
             string colDaxName = col.DaxObjectFullName;
             string colNameOnly = colDaxName.Split('[')[1].TrimEnd(']');
-            var histData = GetHistogramData(col, topNTableExpr, colNameOnly);
+            bool isDateTime = IsDateTimeColumn(col);
+            var histData = GetHistogramData(col, topNTableExpr, colNameOnly, isDateTime);
             if (histData.error == null && histData.binCounts != null)
             {
                 histogramData[col.Name] = GenerateSparkline(histData.binCounts);
@@ -407,11 +418,14 @@ RETURN ROW(
                     newRow["Max"] = minMaxStats[colName].max;
                 }
 
-                // Numeric-only stats
+                // Distribution: numeric + datetime columns
+                if (histogramData.ContainsKey(colName))
+                    newRow[distHeader] = histogramData[colName];
+
+                // Mean/Median/StdDev: numeric columns only (not meaningful for dates)
                 if (isNumeric)
                 {
                     var stats = numericStats[colName];
-                    newRow[distHeader] = histogramData.ContainsKey(colName) ? histogramData[colName] : "";
                     newRow["Mean"] = double.IsNaN(stats.mean) ? DBNull.Value : (object)stats.mean;
                     newRow["Median"] = double.IsNaN(stats.median) ? DBNull.Value : (object)stats.median;
                     newRow["StdDev"] = double.IsNaN(stats.stdev) ? DBNull.Value : (object)stats.stdev;
