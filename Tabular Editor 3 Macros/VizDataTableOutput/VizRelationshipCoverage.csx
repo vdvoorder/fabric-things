@@ -2,8 +2,8 @@
 // For each relationship, checks:
 //   • FK side  — what % of FK values (many side) exist in the PK column (one side)
 //   • Dim side — what % of PK values (one side) are referenced by at least one FK value
-// Orphan FK values → show as BLANK in reports, breaking relationship integrity.
-// Unused dim members → dimension rows that never appear in the fact table.
+// Unmatched FK values → show as BLANK in reports, breaking relationship integrity.
+// Unmatched PK values → dimension rows that never appear in the fact table.
 // Vibe-coded by Ruben Van de Voorde with Claude Code.
 //
 // Instructions
@@ -16,16 +16,16 @@
 // --------------
 // Relationship   — "FactTable[FKCol] → DimTable[PKCol]"
 // Active         — whether the relationship is active
-// # FK Values    — distinct non-blank values in the FK (many) column
-// # Orphans      — FK values with no match in the PK column
-// % FK Cov       — (FK Values - Orphans) / FK Values
-// % FK (Bars)    — bar chart for FK coverage
-// # PK Values    — distinct non-blank values in the PK (one) column
-// # Unused Dim   — PK values that appear in no FK row
-// % Dim Used     — (PK Values - Unused Dim) / PK Values
-// % Dim (Bars)   — bar chart for dim usage
+// # FK Values      — distinct non-blank values in the FK (many) column
+// # FK Unmatched   — FK values with no match in the PK column
+// % FK Coverage    — (FK Values - FK Unmatched) / FK Values
+// % FK (Bars)      — bar chart for FK coverage
+// # PK Values      — distinct non-blank values in the PK (one) column
+// # PK Unused   — PK values that appear in no FK row
+// % PK Coverage    — (PK Values - PK Unused) / PK Values
+// % PK (Bars)      — bar chart for PK coverage
 //
-// Note: BLANK FK values are not counted as orphans — they map to the blank row in the dimension,
+// Note: BLANK FK values are not counted as unmatched — they map to the blank row in the dimension,
 // which is expected behaviour for rows without a related dimension entry.
 // Note: Large fact tables make this expensive. Each relationship fires one DAX query with two EXCEPT calls.
 
@@ -124,42 +124,46 @@ RETURN ROW(
         return covA.CompareTo(covB);
     });
 
+    // Note: Bar column padding can vary across screen sizes, DPI and scaling
+    // settings. If bars appear truncated or have excess whitespace, adjust the
+    // padding values below.
+
     // Build output DataTable
     var outputTable = new System.Data.DataTable();
 
     string relHeader = $"Relationship {FormatTiming()}";
     outputTable.Columns.Add(relHeader,       typeof(string));
     outputTable.Columns.Add("Active",        typeof(string));
-    outputTable.Columns.Add("# FK Values",   typeof(long));
-    outputTable.Columns.Add("# Orphans",     typeof(long));
-    outputTable.Columns.Add("% FK Cov",      typeof(double));
+    outputTable.Columns.Add("# FK Values",     typeof(long));
+    outputTable.Columns.Add("# FK Unmatched", typeof(long));
+    outputTable.Columns.Add("% FK Coverage",  typeof(double));
 
-    string fkBarHeader = "% FK (Bars)" + new string('\u00A0', 11);
-    outputTable.Columns.Add(fkBarHeader,     typeof(string));
+    string fkBarHeader = "% FK (Bars)" + new string('\u00A0', 0);
+    outputTable.Columns.Add(fkBarHeader,      typeof(string));
 
-    outputTable.Columns.Add("# PK Values",   typeof(long));
-    outputTable.Columns.Add("# Unused Dim",  typeof(long));
-    outputTable.Columns.Add("% Dim Used",    typeof(double));
+    outputTable.Columns.Add("# PK Values",     typeof(long));
+    outputTable.Columns.Add("# PK Unused",  typeof(long));
+    outputTable.Columns.Add("% PK Coverage",   typeof(double));
 
-    string dimBarHeader = "% Dim (Bars)" + new string('\u00A0', 10);
-    outputTable.Columns.Add(dimBarHeader,    typeof(string));
+    string pkBarHeader = "% PK (Bars)" + new string('\u00A0', 0);
+    outputTable.Columns.Add(pkBarHeader,       typeof(string));
 
     foreach (var (label, isActive, fk, orphans, pk, unusedDim) in results)
     {
-        double fkCov   = fk > 0 ? Math.Round((double)(fk - orphans)   / fk * 100, 1) : 0.0;
-        double dimUsed = pk > 0 ? Math.Round((double)(pk - unusedDim) / pk * 100, 1) : 0.0;
+        double fkCov = fk > 0 ? Math.Round((double)(fk - orphans)   / fk * 100, 1) : 0.0;
+        double pkCov = pk > 0 ? Math.Round((double)(pk - unusedDim) / pk * 100, 1) : 0.0;
 
         var row = outputTable.NewRow();
-        row[relHeader]      = label;
-        row["Active"]       = isActive ? "\u25C9" : "\u25CB";
-        row["# FK Values"]  = fk;
-        row["# Orphans"]    = orphans;
-        row["% FK Cov"]     = fkCov;
-        row[fkBarHeader]    = GeneratePercentageBar(GetBarLength(fkCov));
-        row["# PK Values"]  = pk;
-        row["# Unused Dim"] = unusedDim;
-        row["% Dim Used"]   = dimUsed;
-        row[dimBarHeader]   = GeneratePercentageBar(GetBarLength(dimUsed));
+        row[relHeader]        = label;
+        row["Active"]         = isActive ? "\u2612" : "\u2610";
+        row["# FK Values"]    = fk;
+        row["# FK Unmatched"] = orphans;
+        row["% FK Coverage"]  = fkCov;
+        row[fkBarHeader]      = GeneratePercentageBar(GetBarLength(fkCov));
+        row["# PK Values"]    = pk;
+        row["# PK Unused"] = unusedDim;
+        row["% PK Coverage"]  = pkCov;
+        row[pkBarHeader]      = GeneratePercentageBar(GetBarLength(pkCov));
         outputTable.Rows.Add(row);
     }
 

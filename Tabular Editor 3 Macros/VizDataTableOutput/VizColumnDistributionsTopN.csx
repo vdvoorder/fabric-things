@@ -1,13 +1,28 @@
 // Tabular Editor C# script to show comprehensive column statistics including distributions.
 // TopN version - analyzes only the first N rows for performance on large tables.
-// For full table analysis, use VisualizeColumnDistributions.csx.
+// For full table analysis, use VizColumnDistributions.csx.
+// Vibe-coded by Ruben Van de Voorde with Claude Code.
 //
 // Instructions
 // ------------
 // 1. Save this script as a macro with a context of 'Column'
 // 2. Configure a keyboard shortcut for the macro if using Tabular Editor 3
 // 3. Select one or more columns from the SAME table and run the script
-// 4. Output shows full statistics: distinct, blanks, min/max, distribution, mean/median/stdev
+//
+// Output columns
+// --------------
+// # Distinct          — distinct non-blank values per column (within TopN sample)
+// % Distinct          — distinct as percentage of sampled rows
+// % Distinct (Bars)   — bar chart for distinct percentage
+// # Blank             — rows with blank/null values (within TopN sample)
+// % Blank             — blank percentage (conditional: only shown if any blanks found)
+// % Blank (Bars)      — bar chart for blank percentage (conditional)
+// Min                 — minimum value (alphabetical for text, True/False for boolean)
+// Max                 — maximum value
+// Distribution        — 12-bin Unicode sparkline histogram (numeric and datetime columns only)
+// Mean                — arithmetic mean (numeric columns only)
+// Median              — median value (numeric columns only)
+// StdDev              — sample standard deviation (numeric columns only)
 
 // ----------------------------------------------------------------------------------------------------------//
 // Configuration
@@ -245,7 +260,16 @@ RETURN ROW(
             ? universalRows[0]
             : "UNION(\n" + String.Join(",\n", universalRows) + ")";
 
-        var universalResult = EvaluateDax(universalDax) as System.Data.DataTable;
+        System.Data.DataTable universalResult;
+        try
+        {
+            universalResult = EvaluateDax(universalDax) as System.Data.DataTable;
+        }
+        catch
+        {
+            Info("Phase 1 DAX query failed. Check that the selected columns are accessible.");
+            return;
+        }
 
         // Phase 2: Min/Max for ALL columns (numeric get numbers, text gets alphabetical, Boolean gets True/False)
         var minMaxStats = new Dictionary<string, (string min, string max)>();
@@ -309,7 +333,12 @@ RETURN ROW(
                 ? numericRows[0]
                 : "UNION(\n" + String.Join(",\n", numericRows) + ")";
 
-            var numericResult = EvaluateDax(numericDax) as System.Data.DataTable;
+            System.Data.DataTable numericResult = null;
+            try
+            {
+                numericResult = EvaluateDax(numericDax) as System.Data.DataTable;
+            }
+            catch { }
 
             if (numericResult != null)
             {
@@ -354,22 +383,24 @@ RETURN ROW(
             }
         }
 
-        // Build output DataTable with bar column padding
-        // Percentage bars (full blocks only): 10 padding for % Distinct, 13 for % Blank (27 total)
-        // Distribution (mixed chars with spaces): 18 padding (30 total, needs more room)
+        // Note: Bar column padding can vary across screen sizes, DPI and scaling
+        // settings. If bars appear truncated or have excess whitespace, adjust the
+        // padding values below.
+
+        // Build output DataTable
         var outputTable = new System.Data.DataTable();
         string columnHeader = $"Column {FormatTiming()}";
         outputTable.Columns.Add(columnHeader, typeof(string));
         outputTable.Columns.Add("# Distinct", typeof(long));
         outputTable.Columns.Add("% Distinct", typeof(double));
         string distinctBarName = "% Distinct (Bars)";
-        string distinctBarPadding = new string('\u00A0', 10);
+        string distinctBarPadding = new string('\u00A0', 11);
         string distinctBarHeader = distinctBarName + distinctBarPadding;
         outputTable.Columns.Add(distinctBarHeader, typeof(string));
         outputTable.Columns.Add("# Blank", typeof(long));
         if (anyBlanks) outputTable.Columns.Add("% Blank", typeof(double));
         string blankBarName = "% Blank (Bars)";
-        string blankBarPadding = new string('\u00A0', 14);
+        string blankBarPadding = new string('\u00A0', 15);
         string blankBarHeader = blankBarName + blankBarPadding;
         if (anyBlanks) outputTable.Columns.Add(blankBarHeader, typeof(string));
         outputTable.Columns.Add("Min", typeof(string));

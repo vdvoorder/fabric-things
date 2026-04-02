@@ -1,6 +1,6 @@
 // Tabular Editor C# script to detect outliers using the IQR method.
 // For numeric columns: values outside Q1 − 1.5×IQR or Q3 + 1.5×IQR.
-// For string columns:  rows whose string length falls outside the length IQR fence.
+// For string columns:  rows whose string length falls outside the length IQR range.
 // Date, boolean, and other column types are silently skipped.
 // Vibe-coded by Ruben Van de Voorde with Claude Code.
 //
@@ -12,18 +12,14 @@
 //
 // Output columns
 // --------------
-// # Non-Blank      — total non-blank rows (denominator for %)
 // [numeric columns only]
-// Lower Fence      — Q1 − 1.5 × IQR
-// Upper Fence      — Q3 + 1.5 × IQR
-// # Low Outliers   — values below lower fence
-// # High Outliers  — values above upper fence
-// [string columns only]
-// Lower Len        — Q1(length) − 1.5 × IQR(length)
-// Upper Len        — Q3(length) + 1.5 × IQR(length)
-// # Len Outliers   — rows whose string length falls outside the fence
-// # Outliers       — total outliers (low + high for numeric; len for string)
-// % Outliers       — outlier % with bar chart (conditional: only if any outliers found)
+// # Low              — values below the lower IQR bound
+// # High             — values above the upper IQR bound
+// Normal Range       — the IQR-based normal range (lower – upper bound)
+// [all columns]
+// # Outliers         — total outliers (low + high for numeric; length outliers for string)
+// # Outliers (Bars)  — proportional bar chart comparing outlier counts across columns
+// % Outliers         — outlier percentage of non-blank rows
 
 // ----------------------------------------------------------------------------------------------------------//
 // Timing infrastructure
@@ -38,17 +34,13 @@ string FormatTiming()
 // ----------------------------------------------------------------------------------------------------------//
 // Helper functions
 
-int GetBarLength(double percentage)
+string GenerateProportionalBar(long value, long maxValue)
 {
-    if (percentage <= 0) return 0;
-    if (percentage >= 100) return 12;
-    return Math.Min(12, Math.Max(1, (int)Math.Round(percentage / 100.0 * 12)));
+    if (maxValue <= 0 || value <= 0) return "";
+    int barLength = Math.Max(1, (int)Math.Round((double)value / maxValue * 12));
+    return new string('\u2588', barLength);
 }
 
-string GeneratePercentageBar(int barLength)
-{
-    return barLength > 0 ? new string('\u2588', barLength) : "";
-}
 
 // ----------------------------------------------------------------------------------------------------------//
 // Main script execution
@@ -82,7 +74,7 @@ else
         {
             string tableDaxName = firstTable.DaxObjectFullName;
 
-            // Tuple: name, nonBlank, lower (fence or len fence), upper, lowOut, highOut, lenOut, isNumeric
+            // Tuple: name, nonBlank, lower bound, upper bound, lowOut, highOut, lenOut, isNumeric
             var results = new List<(string name, long nonBlank, double lower, double upper, long lowOut, long highOut, long lenOut, bool isNumeric)>();
 
             // Numeric columns — IQR on values
@@ -165,37 +157,33 @@ RETURN ROW(
 
             // Pre-scan for conditional columns
             bool anyNumeric  = results.Any(r => r.isNumeric);
-            bool anyString   = results.Any(r => !r.isNumeric);
             bool anyOutliers = results.Any(r => (r.isNumeric ? r.lowOut + r.highOut : r.lenOut) > 0);
+            long maxOutliers = results.Max(r => r.isNumeric ? r.lowOut + r.highOut : r.lenOut);
+
+            // Note: Bar column padding can vary across screen sizes, DPI and scaling
+            // settings. If bars appear truncated or have excess whitespace, adjust the
+            // padding values below.
 
             // Build output DataTable
             var outputTable = new System.Data.DataTable();
 
             string colHeader = $"Column {FormatTiming()}";
-            outputTable.Columns.Add(colHeader,       typeof(string));
-            outputTable.Columns.Add("# Non-Blank",   typeof(long));
+            outputTable.Columns.Add(colHeader, typeof(string));
 
             if (anyNumeric)
             {
-                outputTable.Columns.Add("Lower Fence",    typeof(double));
-                outputTable.Columns.Add("Upper Fence",    typeof(double));
-                outputTable.Columns.Add("# Low Outliers", typeof(long));
-                outputTable.Columns.Add("# High Outliers",typeof(long));
-            }
-            if (anyString)
-            {
-                outputTable.Columns.Add("Lower Len",      typeof(double));
-                outputTable.Columns.Add("Upper Len",      typeof(double));
-                outputTable.Columns.Add("# Len Outliers", typeof(long));
+                outputTable.Columns.Add("# Low",  typeof(long));
+                outputTable.Columns.Add("# High", typeof(long));
             }
 
-            outputTable.Columns.Add("# Outliers", typeof(long));
+            outputTable.Columns.Add("Normal Range", typeof(string));
+            outputTable.Columns.Add("# Outliers",   typeof(long));
 
-            string outBarHeader = "% Outliers (Bars)" + new string('\u00A0', 5);
+            string barHeader = "# Outliers (Bars)" + new string('\u00A0', 0);
             if (anyOutliers)
             {
-                outputTable.Columns.Add("% Outliers", typeof(double));
-                outputTable.Columns.Add(outBarHeader, typeof(string));
+                outputTable.Columns.Add(barHeader,      typeof(string));
+                outputTable.Columns.Add("% Outliers",   typeof(double));
             }
 
             foreach (var (name, nonBlank, lower, upper, lowOut, highOut, lenOut, isNumeric) in results)
@@ -203,30 +191,37 @@ RETURN ROW(
                 long   totalOut = isNumeric ? lowOut + highOut : lenOut;
                 double pctOut   = nonBlank > 0 ? Math.Round((double)totalOut / nonBlank * 100, 1) : 0.0;
 
+                // Format normal range — collapse to single value when lower ≈ upper
+                string range;
+                if (isNumeric)
+                {
+                    double lo = Math.Round(lower, 2);
+                    double hi = Math.Round(upper, 2);
+                    range = lo == hi ? $"{lo}" : $"{lo} – {hi}";
+                }
+                else
+                {
+                    long lo = (long)Math.Round(lower, 0);
+                    long hi = (long)Math.Round(upper, 0);
+                    range = lo == hi ? $"length {lo}" : $"length {lo} – {hi}";
+                }
+
                 var row = outputTable.NewRow();
-                row[colHeader]      = name;
-                row["# Non-Blank"]  = nonBlank;
+                row[colHeader] = name;
 
                 if (anyNumeric)
                 {
-                    row["Lower Fence"]     = isNumeric ? (object)lower   : DBNull.Value;
-                    row["Upper Fence"]     = isNumeric ? (object)upper   : DBNull.Value;
-                    row["# Low Outliers"]  = isNumeric ? (object)lowOut  : DBNull.Value;
-                    row["# High Outliers"] = isNumeric ? (object)highOut : DBNull.Value;
-                }
-                if (anyString)
-                {
-                    row["Lower Len"]       = !isNumeric ? (object)lower  : DBNull.Value;
-                    row["Upper Len"]       = !isNumeric ? (object)upper  : DBNull.Value;
-                    row["# Len Outliers"]  = !isNumeric ? (object)lenOut : DBNull.Value;
+                    row["# Low"]  = isNumeric ? (object)lowOut  : DBNull.Value;
+                    row["# High"] = isNumeric ? (object)highOut : DBNull.Value;
                 }
 
-                row["# Outliers"] = totalOut;
+                row["Normal Range"] = range;
+                row["# Outliers"]   = totalOut;
 
                 if (anyOutliers)
                 {
-                    row["% Outliers"] = pctOut;
-                    row[outBarHeader] = GeneratePercentageBar(GetBarLength(pctOut));
+                    row[barHeader]     = GenerateProportionalBar(totalOut, maxOutliers);
+                    row["% Outliers"]  = pctOut;
                 }
 
                 outputTable.Rows.Add(row);

@@ -1,14 +1,22 @@
 // Tabular Editor C# script to show column profile statistics (cardinality and blanks).
 // TopN version - analyzes only the first N rows for performance on large tables.
-// For full table analysis, use VisualizeColumnProfiles.csx.
+// For full table analysis, use VizColumnProfiles.csx.
 // Vibe-coded by Ruben Van de Voorde with Claude Code.
-
+//
 // Instructions
 // ------------
 // 1. Save this script as a macro with a context of 'Column'
 // 2. Configure a keyboard shortcut for the macro if using Tabular Editor 3
 // 3. Select one or more columns from the SAME table and run the script
-// 4. Output shows distinct counts and blank statistics with visualizations
+//
+// Output columns
+// --------------
+// # Distinct          — distinct non-blank values per column (within TopN sample)
+// % Distinct          — distinct as percentage of sampled rows
+// % Distinct (Bars)   — bar chart for distinct percentage
+// # Blank             — rows with blank/null values (within TopN sample)
+// % Blank             — blank percentage (conditional: only shown if any blanks found)
+// % Blank (Bars)      — bar chart for blank percentage (conditional)
 
 // ----------------------------------------------------------------------------------------------------------//
 // Configuration
@@ -100,7 +108,16 @@ RETURN ROW(
             ? rows[0]
             : "UNION(\n" + String.Join(",\n", rows) + ")";
 
-        var result = EvaluateDax(dax) as System.Data.DataTable;
+        System.Data.DataTable result;
+        try
+        {
+            result = EvaluateDax(dax) as System.Data.DataTable;
+        }
+        catch
+        {
+            Info("DAX query failed. Check that the selected columns are accessible.");
+            return;
+        }
 
         // Pre-scan results: check for blanks
         bool anyBlanks = false;
@@ -113,21 +130,24 @@ RETURN ROW(
             }
         }
 
-        // Build output DataTable with bar column padding
-        // Percentage bars (full blocks only): 10 padding for % Distinct, 13 for % Blank (27 total)
+        // Note: Bar column padding can vary across screen sizes, DPI and scaling
+        // settings. If bars appear truncated or have excess whitespace, adjust the
+        // padding values in the "Build output DataTable" section below.
+
+        // Build output DataTable
         var outputTable = new System.Data.DataTable();
         string columnHeader = $"Column {FormatTiming()}";
         outputTable.Columns.Add(columnHeader, typeof(string));
         outputTable.Columns.Add("# Distinct", typeof(long));
         outputTable.Columns.Add("% Distinct", typeof(double));
         string distinctBarName = "% Distinct (Bars)";
-        string distinctBarPadding = new string('\u00A0', 10);
+        string distinctBarPadding = new string('\u00A0', 11);
         string distinctBarHeader = distinctBarName + distinctBarPadding;
         outputTable.Columns.Add(distinctBarHeader, typeof(string));
         outputTable.Columns.Add("# Blank", typeof(long));
         if (anyBlanks) outputTable.Columns.Add("% Blank", typeof(double));
         string blankBarName = "% Blank (Bars)";
-        string blankBarPadding = new string('\u00A0', 14);
+        string blankBarPadding = new string('\u00A0', 15);
         string blankBarHeader = blankBarName + blankBarPadding;
         if (anyBlanks) outputTable.Columns.Add(blankBarHeader, typeof(string));
 

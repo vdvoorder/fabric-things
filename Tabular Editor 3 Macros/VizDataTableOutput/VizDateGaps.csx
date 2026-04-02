@@ -12,13 +12,13 @@
 //
 // Output columns
 // --------------
-// # Distinct Dates  — distinct non-blank date values in the column
-// Date Range (Days) — span in days from min to max date
-// Median Gap (Days) — typical gap size between consecutive dates
-// Max Gap (Days)    — largest single gap observed
-// Upper Fence       — Q3 + 1.5 × IQR; threshold above which a gap is flagged
-// # Large Gaps      — gaps exceeding the upper fence
-// % Large Gaps      — share of all gaps that are large, shown as bar chart
+// # Distinct Dates       — distinct non-blank date values in the column
+// Date Range (Days)      — span in days from min to max date
+// Typical Spacing (Days) — median spacing between consecutive dates (describes the baseline cadence)
+// Max Spacing (Days)     — largest single spacing observed
+// Upper Fence            — Q3 + 1.5 × IQR; threshold above which a spacing is flagged as a large gap
+// # Large Gaps           — spacings exceeding the upper fence
+// % Large Gaps           — share of all spacings that are large, shown as bar chart
 //                     (conditional: only if any large gaps found)
 //
 // Note: gaps are computed on DISTINCT dates, so duplicate date rows do not inflate
@@ -149,17 +149,21 @@ RETURN ROW(
             // Pre-scan for conditional columns
             bool anyLargeGaps = results.Any(r => r.largeGaps > 0);
 
+            // Note: Bar column padding can vary across screen sizes, DPI and scaling
+            // settings. If bars appear truncated or have excess whitespace, adjust the
+            // padding values below.
+
             // Build output DataTable
             var outputTable = new System.Data.DataTable();
 
             string colHeader = $"Column {FormatTiming()}";
-            outputTable.Columns.Add(colHeader,             typeof(string));
-            outputTable.Columns.Add("# Distinct Dates",   typeof(long));
-            outputTable.Columns.Add("Date Range (Days)",   typeof(long));
-            outputTable.Columns.Add("Median Gap (Days)",   typeof(double));
-            outputTable.Columns.Add("Max Gap (Days)",      typeof(double));
-            outputTable.Columns.Add("Upper Fence",         typeof(double));
-            outputTable.Columns.Add("# Large Gaps",        typeof(long));
+            outputTable.Columns.Add(colHeader,                  typeof(string));
+            outputTable.Columns.Add("# Distinct Dates",        typeof(long));
+            outputTable.Columns.Add("Date Range (Days)",        typeof(long));
+            outputTable.Columns.Add("Typical Spacing (Days)",   typeof(double));
+            outputTable.Columns.Add("Max Spacing (Days)",       typeof(double));
+            outputTable.Columns.Add("Upper Fence",              typeof(double));
+            outputTable.Columns.Add("# Large Gaps",             typeof(long));
 
             string barHeader = "% Large Gaps (Bars)" + new string('\u00A0', 3);
             if (anyLargeGaps)
@@ -174,10 +178,10 @@ RETURN ROW(
 
                 var row = outputTable.NewRow();
                 row[colHeader]             = name;
-                row["# Distinct Dates"]    = distinctDates;
-                row["Date Range (Days)"]   = rangeDays;
-                row["Median Gap (Days)"]   = Math.Round(medianGap, 1);
-                row["Max Gap (Days)"]      = Math.Round(maxGap, 1);
+                row["# Distinct Dates"]       = distinctDates;
+                row["Date Range (Days)"]      = rangeDays;
+                row["Typical Spacing (Days)"] = Math.Round(medianGap, 1);
+                row["Max Spacing (Days)"]     = Math.Round(maxGap, 1);
                 row["Upper Fence"]         = Math.Round(upperFence, 1);
                 row["# Large Gaps"]        = largeGaps;
 

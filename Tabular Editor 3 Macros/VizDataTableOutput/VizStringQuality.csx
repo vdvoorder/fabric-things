@@ -1,4 +1,4 @@
-// Tabular Editor C# script to detect string quality issues: whitespace, casing inconsistencies, and mixed types.
+// Tabular Editor C# script to detect string quality issues: whitespace and mixed types.
 // Vibe-coded by Ruben Van de Voorde with Claude Code.
 //
 // Instructions
@@ -12,11 +12,13 @@
 // --------------
 // # Whitespace     — rows where the value differs from TRIM(value): leading/trailing spaces or
 //                    multiple consecutive internal spaces
-// # Casing Issues  — extra distinct forms caused by casing variants (e.g. "Shipped" and "SHIPPED"
-//                    count as 1 issue): DISTINCTCOUNT - DISTINCTCOUNT(LOWER(col))
-// # Numeric Values — non-blank values that parse successfully as a number via VALUE()
-// # Date Values    — non-blank values that parse as a date via DATEVALUE() (excluding numeric hits)
+// # Date Values    — non-blank values that parse as a date via DATEVALUE()
+// # Numeric Values — non-blank values that parse as a number via VALUE() (excluding date hits)
 // % WS / % Mixed   — row percentages shown as block bar charts (conditional: only if any issues found)
+//
+// Note: casing inconsistency detection (e.g. "Shipped" vs "SHIPPED") is not included because
+// VertiPaq's default case-insensitive collation collapses casing variants into a single value.
+// DISTINCTCOUNT cannot distinguish them, and they never surface as duplicates in reports.
 
 // ----------------------------------------------------------------------------------------------------------//
 // Timing infrastructure
@@ -72,7 +74,7 @@ else
             string tableDaxName = _FirstTable.DaxObjectFullName;
 
             // Per-column results
-            var results = new List<(string name, long total, long whitespace, long casingExtra, long numeric, long date)>();
+            var results = new List<(string name, long total, long whitespace, long numeric, long date)>();
 
             foreach (var col in stringCols)
             {
@@ -88,25 +90,21 @@ VAR _whitespace =
         FILTER({tableDaxName}, NOT ISBLANK({colDax})),
         IF({colDax} <> TRIM({colDax}), 1, 0)
     )
-VAR _distinctAll   = DISTINCTCOUNT({colDax})
-VAR _distinctLower = COUNTROWS(DISTINCT(SELECTCOLUMNS(FILTER({tableDaxName}, NOT ISBLANK({colDax})), ""lc"", LOWER({colDax}))))
-VAR _casingExtra   = _distinctAll - _distinctLower
-VAR _numeric =
+VAR _date =
     SUMX(
         FILTER({tableDaxName}, NOT ISBLANK({colDax})),
-        IF(IFERROR(VALUE({colDax}) + 0, BLANK()) <> BLANK(), 1, 0)
-    )
-VAR _dateOnly =
-    SUMX(
-        FILTER({tableDaxName}, NOT ISBLANK({colDax}) && IFERROR(VALUE({colDax}) + 0, BLANK()) = BLANK()),
         IF(IFERROR(DATEVALUE({colDax}), BLANK()) <> BLANK(), 1, 0)
+    )
+VAR _numeric =
+    SUMX(
+        FILTER({tableDaxName}, NOT ISBLANK({colDax}) && IFERROR(DATEVALUE({colDax}), BLANK()) = BLANK()),
+        IF(IFERROR(VALUE({colDax}) + 0, BLANK()) <> BLANK(), 1, 0)
     )
 RETURN ROW(
     ""Total"",       _total,
     ""Whitespace"",  _whitespace,
-    ""Casing"",      _casingExtra,
     ""Numeric"",     _numeric,
-    ""Date"",        _dateOnly
+    ""Date"",        _date
 )";
 
                 try
@@ -117,22 +115,25 @@ RETURN ROW(
                         var r = result.Rows[0];
                         long total   = r["[Total]"]      == DBNull.Value ? 0 : Convert.ToInt64(r["[Total]"]);
                         long ws      = r["[Whitespace]"] == DBNull.Value ? 0 : Convert.ToInt64(r["[Whitespace]"]);
-                        long casing  = r["[Casing]"]     == DBNull.Value ? 0 : Convert.ToInt64(r["[Casing]"]);
                         long numeric = r["[Numeric]"]    == DBNull.Value ? 0 : Convert.ToInt64(r["[Numeric]"]);
                         long date    = r["[Date]"]       == DBNull.Value ? 0 : Convert.ToInt64(r["[Date]"]);
-                        results.Add((colName, total, ws, casing, numeric, date));
+                        results.Add((colName, total, ws, numeric, date));
                     }
                 }
                 catch
                 {
                     // Column failed — add zeros so it still appears in output
-                    results.Add((colName, 0, 0, 0, 0, 0));
+                    results.Add((colName, 0, 0, 0, 0));
                 }
             }
 
             // Pre-scan to determine conditional columns
             bool anyWhitespace = results.Any(r => r.whitespace > 0);
             bool anyMixed      = results.Any(r => r.numeric > 0 || r.date > 0);
+
+            // Note: Bar column padding can vary across screen sizes, DPI and scaling
+            // settings. If bars appear truncated or have excess whitespace, adjust the
+            // padding values below.
 
             // Build output DataTable
             var outputTable = new System.Data.DataTable();
@@ -141,18 +142,16 @@ RETURN ROW(
             outputTable.Columns.Add(colHeader, typeof(string));
 
             outputTable.Columns.Add("# Whitespace", typeof(long));
-            string wsBarHeader = "% WS (Bars)" + new string('\u00A0', 11);
+            string wsBarHeader = "% WS (Bars)" + new string('\u00A0', 3);
             if (anyWhitespace)
             {
                 outputTable.Columns.Add("% WS", typeof(double));
                 outputTable.Columns.Add(wsBarHeader, typeof(string));
             }
 
-            outputTable.Columns.Add("# Casing Issues", typeof(long));
-
             outputTable.Columns.Add("# Numeric Values", typeof(long));
             outputTable.Columns.Add("# Date Values", typeof(long));
-            string mixedBarHeader = "% Mixed (Bars)" + new string('\u00A0', 9);
+            string mixedBarHeader = "% Mixed (Bars)" + new string('\u00A0', 0);
             if (anyMixed)
             {
                 outputTable.Columns.Add("% Mixed", typeof(double));
@@ -160,7 +159,7 @@ RETURN ROW(
             }
 
             // Populate rows
-            foreach (var (name, total, whitespace, casingExtra, numeric, date) in results)
+            foreach (var (name, total, whitespace, numeric, date) in results)
             {
                 double pctWs    = total > 0 ? Math.Round((double)whitespace          / total * 100, 1) : 0;
                 double pctMixed = total > 0 ? Math.Round((double)(numeric + date)    / total * 100, 1) : 0;
@@ -173,7 +172,6 @@ RETURN ROW(
                     row["% WS"]         = pctWs;
                     row[wsBarHeader]    = GeneratePercentageBar(GetBarLength(pctWs));
                 }
-                row["# Casing Issues"]  = casingExtra;
                 row["# Numeric Values"] = numeric;
                 row["# Date Values"]    = date;
                 if (anyMixed)

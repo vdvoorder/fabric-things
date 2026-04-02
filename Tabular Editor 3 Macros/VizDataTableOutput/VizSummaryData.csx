@@ -1,16 +1,20 @@
-// Tabular Editor C# script to summarize data for selected tables, columns and measures with ASCII bar chart visualization. Written by Ruben Van de Voorde, adapted from the original PreviewColumnsAndMeasures.csx by Kurt Buhler (https://gist.github.com/data-goblin/6ff37760cb35b793801c19a6a0ad73b0).
-// * For >=1 tables, return row count per table with ASCII bar chart for visual comparison
-// * For >=1 columns from the same table, return distinct values and row count per combination
-// * For >=1 measures, return the evaluated result per measure
-// * For any combination of columns & measures, return distinct values per column combination and evaluated result
-// Vibe-coded by Ruben Van de Voorde with Claude Code.
-
+// Tabular Editor C# script to summarize data for selected tables, columns and measures with
+// Unicode bar chart visualization.
+// Vibe-coded by Ruben Van de Voorde with Claude Code. Adapted from the original
+// PreviewColumnsAndMeasures.csx by Kurt Buhler (https://gist.github.com/data-goblin/6ff37760cb35b793801c19a6a0ad73b0).
+//
 // Instructions
 // ------------
 // 1. Save this script as a macro with a context of 'Table', 'Column' and 'Measure'
 // 2. Configure a keyboard shortcut for the macro if using Tabular Editor 3
-// 3. Select any combination of tables, columns & measures and run the script
-// 4. The output will show you the summarized data for all selected objects
+// 3. Select any combination of tables, columns and measures and run the script
+//
+// Output columns (varies by selection)
+// -------------------------------------
+// Tables only:       Table name, # Rows, Bars (proportional row count comparison)
+// Columns only:      Distinct value combinations per column, # Rows per combination, Bars
+// Measures only:     Measure name, evaluated result, Bars
+// Columns + Measures: Distinct value combinations per column, evaluated result per measure, Bars
 
 // ----------------------------------------------------------------------------------------------------------//
 // Timing infrastructure
@@ -186,9 +190,11 @@ void OutputWithChart(System.Data.DataTable result)
         newTable.Columns.Add(cleanName, col.DataType);
     }
 
+    // Note: Bar column padding can vary across screen sizes, DPI and scaling
+    // settings. If bars appear truncated or have excess whitespace, adjust the
+    // padding values below.
+
     // Add the Bars column at the end with timing
-    // Pad header with non-breaking spaces for 12-block width
-    // Padding: 13 if <10s (shorter timing string), 11 if >=10s (longer timing string)
     double elapsedSeconds = _stopwatch.ElapsedMilliseconds / 1000.0;
     int barsPadding = elapsedSeconds < 10 ? 13 : 11;
     string chartColumnName = $"Bars {FormatTiming()}" + new string('\u00A0', barsPadding);
@@ -235,7 +241,9 @@ if ( _NrTables == 1 && _NrColumns == 0 && _NrMeasures == 0 )
         @"""" + "Row Count" + @"""" +
         ", [Row Count])";
 
-    var result = EvaluateDax(_dax) as System.Data.DataTable;
+    System.Data.DataTable result;
+    try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+    catch { Info("DAX query failed. Check that the selected table is accessible."); return; }
     OutputWithChart(result);
 }
 
@@ -251,7 +259,9 @@ else if ( _NrTables > 1 && _NrColumns == 0 && _NrMeasures == 0 )
         @"""" + "Row Count" + @"""" +
         ", [Row Count])";
 
-    var result = EvaluateDax(_dax) as System.Data.DataTable;
+    System.Data.DataTable result;
+    try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+    catch { Info("DAX query failed. Check that the selected tables are accessible."); return; }
     OutputWithChart(result);
 }
 
@@ -268,7 +278,9 @@ else if ( _NrTables == 0 && _NrColumns == 0 && _NrMeasures > 1 )
         @"""" + "Measure Result" + @"""" +
         ", [Result])" ;
 
-    var result = EvaluateDax(_dax) as System.Data.DataTable;
+    System.Data.DataTable result;
+    try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+    catch { Info("DAX query failed. Check that the selected measures are valid."); return; }
 
     // Find max absolute value for scaling bars
     var measureValues = new List<double>();
@@ -327,7 +339,9 @@ else if ( _NrTables == 0 && _NrColumns == 0 && _NrMeasures == 1 )
         @"""" + "Measure Result" + @"""" +
         ", [Result])" ;
 
-    var result = EvaluateDax(_dax) as System.Data.DataTable;
+    System.Data.DataTable result;
+    try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+    catch { Info("DAX query failed. Check that the selected measure is valid."); return; }
 
     // Build new table with bars (single measure = full bar)
     var newTable = new System.Data.DataTable();
@@ -372,7 +386,9 @@ else if ( _NrTables == 0 && _NrMeasures > 0 && _NrColumns > 0 )
     string _dax =
         "SUMMARIZECOLUMNS ( " + _Columns + ", " + _Measures + ")";
 
-    var result = EvaluateDax(_dax) as System.Data.DataTable;
+    System.Data.DataTable result;
+    try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+    catch { Info("DAX query failed. Check that the selected columns and measures are valid."); return; }
 
     // Get measure names (columns will be named [@MeasureName] in result)
     var measureNames = Selected.Measures.Select(m => m.Name).ToList();
@@ -492,7 +508,9 @@ else if ( _NrTables == 0 && _NrMeasures == 0 && _NrColumns > 0 )
             _Columns + ",\n" +
             @"""Row Count"", COUNTX ( CURRENTGROUP (), 1 ))";
 
-        var result = EvaluateDax(_dax) as System.Data.DataTable;
+        System.Data.DataTable result;
+        try { result = EvaluateDax(_dax) as System.Data.DataTable; }
+        catch { Info("DAX query failed. Check that the selected columns are accessible."); return; }
         OutputWithChart(result);
     }
     else
