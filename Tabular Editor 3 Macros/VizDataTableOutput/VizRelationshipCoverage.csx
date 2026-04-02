@@ -21,7 +21,7 @@
 // % FK Coverage    — (FK Values - FK Unmatched) / FK Values
 // % FK (Bars)      — bar chart for FK coverage
 // # PK Values      — distinct non-blank values in the PK (one) column
-// # PK Unused   — PK values that appear in no FK row
+// # PK Unused      — PK values that appear in no FK row
 // % PK Coverage    — (PK Values - PK Unused) / PK Values
 // % PK (Bars)      — bar chart for PK coverage
 //
@@ -138,14 +138,14 @@ RETURN ROW(
     outputTable.Columns.Add("# FK Unmatched", typeof(long));
     outputTable.Columns.Add("% FK Coverage",  typeof(double));
 
-    string fkBarHeader = "% FK (Bars)" + new string('\u00A0', 0);
+    string fkBarHeader = "% FK (Bars)" + new string('\u00A0', 20);
     outputTable.Columns.Add(fkBarHeader,      typeof(string));
 
     outputTable.Columns.Add("# PK Values",     typeof(long));
     outputTable.Columns.Add("# PK Unused",  typeof(long));
     outputTable.Columns.Add("% PK Coverage",   typeof(double));
 
-    string pkBarHeader = "% PK (Bars)" + new string('\u00A0', 0);
+    string pkBarHeader = "% PK (Bars)" + new string('\u00A0', 19);
     outputTable.Columns.Add(pkBarHeader,       typeof(string));
 
     foreach (var (label, isActive, fk, orphans, pk, unusedDim) in results)
